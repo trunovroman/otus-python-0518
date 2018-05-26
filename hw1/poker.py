@@ -68,12 +68,18 @@ def internal_best_hand(hand_list):
     # Формируем все комбинации по 5 карт для всех возможных рук из 7 карт.
     all_combinations = []
     for x in hand_list:
-        all_combinations.extend(list(sorted(list(y), reverse=True) for y in itertools.combinations(x, 5)))
+        all_combinations.extend(list(
+            sorted(list(y), reverse=True)
+            for y in itertools.combinations(x, 5)
+        ))
 
-    # Считаем ранг для каждой руки (дубли исключаем за счет группировки)
-    combinations_with_rank = list((hand_rank(key), key) for key, group in itertools.groupby(sorted(all_combinations)))
+    # Сопоставляем каждой руке ранг (дубли, которые неминуемо будут для джокеров исключаем за счет группировки)
+    combinations_with_rank = list(
+        (hand_rank(key), key)
+        for key, group in itertools.groupby(sorted(all_combinations))
+    )
 
-    # Сортируем по убыванию ранга. Берем первый элемент (самый высокий ранг)
+    # Сортируем по убыванию ранга. Берем первый элемент (самый высокий ранг) — это и будет результат
     return sorted(combinations_with_rank, reverse=True)[0][1]
 
 
