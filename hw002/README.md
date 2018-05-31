@@ -4,7 +4,7 @@
 ## Запуск скрипта
 
 ```
-python log_analyzer.py [--config CONFIG]
+python3 log_analyzer.py [--config CONFIG]
 ```
 `CONFIG` — путь до конфигурационного файла. Ни один из параметров не является обязательным, в этом случае будет взято знаение по умолчанию (см. переменную config в log_analyzer.py)
 
@@ -37,5 +37,5 @@ python log_analyzer.py [--config CONFIG]
 ## Запуск тестов
 Тесты лежат в папке tests. Тесты запускаются из корневой папки скрипта командой:
 ```
-python -m unittest tests/test_*.py
+python3 -m unittest tests/test_*.py
 ```
