@@ -22,6 +22,7 @@ config = {
     "LOG_DIR": "./log",
     "PATTERN_FILE_PATH": "./report.html",
     "ERROR_PERCENT": 10,
+    "ROUND_PLACES": 3,
     "LOG_LEVEL": "INFO",
     "LOG_FILE_MASK": "(nginx-access-ui.log-(?P<date>\d{8}))",
     "LOGGER_FILE_PATH": ""
@@ -42,7 +43,7 @@ def main(json_config):
         "--config",
         type=str,
         default="./config.json",
-        help="Path to external JSON configuration file. Default parameters are {0}".format(json_config))
+        help="Path to external JSON configuration file")
 
     # Read command-line arguments
     args = parser.parse_args()
@@ -81,7 +82,7 @@ def main(json_config):
         return
 
     # Parse logs
-    json_str = parse_log(log_file_path, cfg.report_size, cfg.error_percent)
+    json_str = parse_log(log_file_path, cfg.report_size, cfg.error_percent, cfg.round_places)
 
     # Generate report
     generate_report(json_str, report_file_path, cfg.pattern_file_path)
@@ -119,7 +120,7 @@ def generate_report(json_str, report_file_path, pattern_path):
     logging.info("Report {0} created".format(report_file_path))
 
 
-def parse_log(log_file_path, report_size, error_percent):
+def parse_log(log_file_path, report_size, error_percent, round_places):
     if log_file_path.endswith(".gz"):
         logfile = gzip.open(log_file_path, 'rt')
     else:
@@ -130,8 +131,8 @@ def parse_log(log_file_path, report_size, error_percent):
 
     # Парсим файл, собираем статистику
     error_size = 0
-    statistic = URLStatistic()
-    for l in logfile.readlines():
+    statistic = URLStatistic(round_places)
+    for l in logfile:
         search_result = re.search(format_line, l)
         if search_result:
             url = search_result["url"]
@@ -146,6 +147,7 @@ def parse_log(log_file_path, report_size, error_percent):
                 sys.exit(1)
 
     logfile.close()
+    statistic.clear_cache()
 
     return json.dumps(statistic.get_items(report_size), cls=PropertyEncoder)
 
@@ -162,48 +164,54 @@ def get_log_path(log_dir, log_file_mask):
         return os.path.join(log_dir, log_files[0])
 
 
+class cached_property(object):
+    def __init__(self, func):
+        self.func = func
+
+    def __get__(self, instance, cls=None):
+        result = instance.__dict__[self.func.__name__] = self.func(instance)
+        return result
+
+
 class URLStatistic:
-    def __init__(self):
+    def __init__(self, round_places):
+        self._round_places = round_places
         self._container = {}
-        self._cache = Cache()
 
     def add_url(self, url, request_time):
-        self._cache.clear()
+        # Добавляем URL в контейнер
         if url in self._container:
             self._container[url].add_time(request_time)
         else:
-            data = URLData(url, self)
+            data = URLData(url, self, self._round_places)
             data.add_time(request_time)
             self._container[url] = data
 
-    @property
+    @cached_property
     def total_count(self):
-        if self._cache.exists("total_count"):
-            return self._cache.get("total_count")
-        else:
-            total_count = sum([value.count for key, value in self._container.items()])
-            self._cache.save("total_count", total_count)
-            return total_count
+        return sum([value.count for key, value in self._container.items()])
 
-    @property
+    @cached_property
     def total_time_sum(self):
-        if self._cache.exists("total_time_sum"):
-            return self._cache.get("total_time_sum")
-        else:
-            total_time_sum = sum([value.time_sum for key, value in self._container.items()])
-            self._cache.save("total_time_sum", total_time_sum)
-            return total_time_sum
+        return sum([value.time_sum for key, value in self._container.items()])
 
     def get_items(self, count):
         values = self._container.values()
         return sorted(values, key=lambda x: x.time_sum, reverse=True)[:count]
 
+    def clear_cache(self):
+        if hasattr(self, "total_count"):
+            delattr(self, "total_count")
+        if hasattr(self, "total_time_sum"):
+            delattr(self, "total_time_sum")
+
 
 class URLData:
-    def __init__(self, url, parent):
+    def __init__(self, url, parent, round_places):
         self._time_list = []
         self._url = url
         self._parent = parent
+        self._round_places = round_places
 
     def add_time(self, request_time):
         self._time_list.append(request_time)
@@ -219,35 +227,35 @@ class URLData:
     @property
     def count_percent(self):
         total_count = self._parent.total_count
-        return round((self.count / total_count) * 100, 3) if total_count != 0 else 0
+        return round((self.count / total_count) * 100, self._round_places) if total_count != 0 else 0
 
     @property
     def time_sum(self):
-        return round(sum(self._time_list), 3)
+        return round(sum(self._time_list), self._round_places)
 
     @property
     def time_percent(self):
         total_time_sum = self._parent.total_time_sum
-        return round((self.time_sum / total_time_sum) * 100, 3) if total_time_sum != 0 else 0
+        return round((self.time_sum / total_time_sum) * 100, self._round_places) if total_time_sum != 0 else 0
 
     @property
     def time_avg(self):
         c = self.count
-        return round(self.time_sum / c, 3) if c != 0 else 0
+        return round(self.time_sum / c, self._round_places) if c != 0 else 0
 
     @property
     def time_max(self):
-        return round(max(self._time_list), 3)
+        return round(max(self._time_list), self._round_places)
 
     @property
     def time_median(self):
         count = self.count
         if count % 2 == 0:
             # Для четного количества элементов медиана равна половине суммы двух чисел, которые стоят по середине
-            return round(sum(sorted(self._time_list)[(count // 2) - 1:(count // 2) + 1]) / 2, 3)
+            return round(sum(sorted(self._time_list)[(count // 2) - 1:(count // 2) + 1]) / 2, self._round_places)
         else:
             # Для нечетного количества элементов медиана равна элементу в середине списка
-            return round(sorted(self._time_list)[count // 2], 3)
+            return round(sorted(self._time_list)[count // 2], self._round_places)
 
 
 class PropertyEncoder(json.JSONEncoder):
@@ -259,29 +267,13 @@ class PropertyEncoder(json.JSONEncoder):
         return result
 
 
-class Cache:
-    def __init__(self):
-        self._dic = {}
-
-    def save(self, name, value):
-        self._dic[name] = value
-
-    def clear(self):
-        if len(self._dic) > 0:
-            self._dic.clear()
-
-    def exists(self, name):
-        return name in self._dic
-
-    def get(self, name):
-        return self._dic[name]
-
-
 class Configuration:
     def __init__(self):
         self._config = {}
 
     def __getitem__(self, key):
+        if key not in self._config.keys():
+            raise KeyError("Config attribute {0} is not defined".format(key))
         return self._config[key]
 
     def load_from_object(self, json_config):
@@ -341,8 +333,18 @@ class Configuration:
         attr = "ERROR_PERCENT"
         value = self.get_attr_value(attr, int)
         if value > 100 or value < 0:
-            raise TypeError(
+            raise ValueError(
                 "Config attribute {0} must be greater than 0 and less then 100, but it is {1}".format(
+                    attr, value))
+        return value
+
+    @property
+    def round_places(self):
+        attr = "ROUND_PLACES"
+        value = self.get_attr_value(attr, int)
+        if value < 0:
+            raise ValueError(
+                "Config attribute {0} must be greater than 0, but it is {1}".format(
                     attr, value))
         return value
 
@@ -362,8 +364,8 @@ class Configuration:
         value = self.get_attr_value(attr, str)
         allowed_values = {"INFO": logging.INFO, "ERROR": logging.ERROR, "CRITICAL": logging.CRITICAL}
         if value not in allowed_values.keys():
-            raise TypeError("Allowed values for attribute {0} are: {1}, but it value is: {2}".format(
-                            attr, allowed_values.keys(), value))
+            raise ValueError("Allowed values for attribute {0} are: {1}, but it value is: {2}".format(
+                attr, allowed_values.keys(), value))
 
         return allowed_values[value]
 
