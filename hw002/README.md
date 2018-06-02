@@ -40,4 +40,3 @@ python3 log_analyzer.py [--config CONFIG]
 python3 -m unittest tests/test_*.py
 ```
 * `test_calculation.py` — проверяется расчет аналитических показателей отчета.
-* `test_config.py` — тестируется класс обработки конфигов.

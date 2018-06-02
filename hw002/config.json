@@ -5,7 +5,7 @@
   "PATTERN_FILE_PATH": "./report.html",
   "ERROR_PERCENT": 10,
   "ROUND_PLACES": 3,
-  "LOG_LEVEL": "INFO",
+  "LOGGING_LEVEL": "INFO",
   "LOG_FILE_MASK": "(nginx-access-ui.log-(?P<date>\\d{8}))",
   "LOGGER_FILE_PATH": ""
 }
