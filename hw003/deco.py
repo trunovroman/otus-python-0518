@@ -1,4 +1,4 @@
-# from functools import update_wrapper
+from functools import update_wrapper
 
 
 def disable(func):
@@ -12,14 +12,20 @@ def disable(func):
     return func
 
 
-def decorator():
+def decorator(deco):
     """
     Decorate a decorator so that it inherits the docstrings
     and stuff from the function it's decorating.
     """
-    return
+
+    def wrapped(f):
+        return update_wrapper(deco(f), f)
+
+    update_wrapper(wrapped, deco)
+    return wrapped
 
 
+@decorator
 def countcalls(func):
     """
     Decorator that counts calls made to the function decorated.
@@ -44,21 +50,22 @@ def countcalls(func):
 #         return self.func(*args)
 
 
+@decorator
 def memo(func):
     """
     Memoize a function so that it caches all return values for
     faster future lookups.
     """
+
     cache = {}
 
     def wrapper(*args):
+        update_wrapper(wrapper, func)
         if args in cache:
-            # print("from cache")
             return cache[args]
         else:
-            cache[args] = result = func(*args)
+            result = cache[args] = func(*args)
             return result
-
     return wrapper
 
 # Раскоментировав строчку ниже задизейблим memo
@@ -78,6 +85,7 @@ def memo(func):
 #             return res
 
 
+@decorator
 def n_ary(func):
     """
     Given binary function f(x, y), return an n_ary function such
@@ -85,6 +93,7 @@ def n_ary(func):
     """
 
     def wrapper(x, *args):
+        update_wrapper(wrapper, func)
         return x if not args else func(x, wrapper(*args))
 
     return wrapper
@@ -111,6 +120,8 @@ def trace(intend):
      <-- fib(3) == 3
 
     """
+
+    @decorator
     def wrapper(func):
         def internal(*args):
             print("{0} --> {1}({2})".format(wrapper.intend_level * intend, func.__name__, ", ".join(map(repr, args))))
@@ -131,9 +142,6 @@ def trace(intend):
     return wrapper
 
 
-# В исходном файле deco.py декораторы countcalls и memo изменены местами. Нужно их переставить,
-# т.к. в противном случае при отработке memo теряется аттрибут функции calls,
-# который инициализируется в countcalls
 @countcalls
 @memo
 @n_ary
@@ -148,11 +156,11 @@ def bar(a, b):
     return a * b
 
 
-# Поменял местами трассирующий и memo декораторы. В противном случае в трассирующем декораторе на print`е всплывает
-# неверное имя исходной функции (всплывает имя декорирующей функции)
+# Без декоратора decorator, отработка трассирующего декоратора в данном случае бы привела к выводу неверного
+# названия функции fib
 @countcalls
+@trace("____")
 @memo
-@trace(intend="####")
 def fib(n):
     """Some doc"""
     return 1 if n <= 1 else fib(n-1) + fib(n-2)
@@ -169,7 +177,7 @@ def main():
     print(bar(4, 3, 2, 1))
     print("bar was called", bar.calls, "times")
 
-    # print fib.__doc__
+    print(fib.__doc__)
     fib(3)
     print(fib.calls, 'calls made')
 
