@@ -18,11 +18,11 @@ def decorator(deco):
     and stuff from the function it's decorating.
     """
 
-    def wrapped(f):
-        return update_wrapper(deco(f), f)
+    def wrapper(func):
+        return update_wrapper(deco(func), func)
 
-    update_wrapper(wrapped, deco)
-    return wrapped
+    update_wrapper(wrapper, deco)
+    return wrapper
 
 
 @decorator
