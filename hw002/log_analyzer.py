@@ -165,8 +165,10 @@ def parse_log(log_file_path, error_percent):
             error_lines += 1
 
     # Calculate the percent of parsing errors
-    if error_lines / total_lines * 100 > error_percent:
-        return ParseData(data, "The percent of parsing errors exceeded {0}% limit".format(error_percent))
+    total_errors_percent = error_lines / total_lines * 100
+    if total_errors_percent > error_percent:
+        return ParseData(data, "The percent of parsing errors exceeded {0}% limit ({1:0.3f}%)".format(
+            error_percent, total_errors_percent))
     else:
         return ParseData(data, None)
 
