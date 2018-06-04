@@ -12,8 +12,11 @@ import logging
 import time
 import sys
 from collections import namedtuple
+import copy
+from string import Template
+import datetime
 
-config = {
+CONFIG = {
     "REPORT_SIZE": 1000,
     "REPORT_DIR": "./reports",
     "LOG_DIR": "./log",
@@ -21,11 +24,11 @@ config = {
     "ERROR_PERCENT": 10,
     "ROUND_PLACES": 3,
     "LOGGING_LEVEL": "INFO",
-    "LOG_FILE_MASK": "(nginx-access-ui.log-(?P<date>\d{8})(\.gz)?$)",
+    "LOG_FILE_MASK": "(nginx-access-ui.log-(?P<year>\d{4})(?P<month>\d{2})(?P<day>\d{2})(\.gz)?$)",
     "LOGGER_FILE_PATH": ""
 }
 
-format_line = re.compile(
+FORMAT_LINE = re.compile(
     r"(\"(GET|POST|HEAD|PUT|OPTIONS) (?P<url>.+) HTTP/\d\.\d\")"
     r"(.*)"
     r"(\" (?P<request_time>\d+\.\d+))",
@@ -58,16 +61,27 @@ def main(default_config):
     start_time = time.time()
 
     # Find log file. Return namedtuple("File", "file_path log_date")
-    log_file = get_log_file(cfg["LOG_DIR"], cfg["LOG_FILE_MASK"])
+    try:
+        log_file = get_log_file(cfg["LOG_DIR"], cfg["LOG_FILE_MASK"])
+    except FileNotFoundError as ex:
+        logging.info(ex)
+        return
 
     # Return report file path
-    report_file_path = get_report_path(log_file.log_date, cfg["REPORT_DIR"])
+    try:
+        report_file_path = get_report_path(log_file.log_date, cfg["REPORT_DIR"])
+    except FileExistsError as ex:
+        logging.info(ex)
+        return
 
-    # Parse logs
-    data = parse_log(log_file.file_path, cfg["ERROR_PERCENT"])
+    # Parse logs. Return namedtuple("ParseData", "data error_message")
+    parsed_data = parse_log(log_file.file_path, cfg["ERROR_PERCENT"])
+    if parsed_data.error_message:
+        logging.error(parsed_data.error_message)
+        sys.exit(1)
 
     # Calculate statistics
-    statistics = calculate_statistic(data, cfg["ROUND_PLACES"], cfg["REPORT_SIZE"])
+    statistics = calculate_statistic(parsed_data.data, cfg["ROUND_PLACES"], cfg["REPORT_SIZE"])
 
     # Generate report
     generate_report(statistics, report_file_path, cfg["PATTERN_FILE_PATH"])
@@ -77,50 +91,23 @@ def main(default_config):
 
 
 def load_config(default_config, json_file_path):
-    # Copy config from json object
-    result = dict(default_config)
-
-    # Merge config with file
-    # 1. Check if file exists
-    if not os.path.isfile(json_file_path):
-        logging.error("Config file {0} is not found".format(json_file_path))
-        sys.exit(1)
-
-    # 2. Try to parse it
     with open(json_file_path, "rt") as f:
-        try:
-            json_config = json.load(f)
-        except ValueError as ex:
-            logging.error("Failed to parse config file {0}. Error type: {1}, System message: {2}".format(
-                    json_file_path,
-                    type(ex).__name__,
-                    ex))
-            sys.exit(1)
+        config_from_file = json.load(f)
 
-    # 3. Load parameters with type-checking
-    for prm in json_config:
-        if prm in result:
-            if isinstance(json_config[prm], type(result[prm])):
-                result[prm] = json_config[prm]
-            else:
-                # Parameters from object and from file must have the same type
-                raise TypeError("Configuration parameter {0} must has type {1}, but it has {2}".format(
-                    prm, type(result[prm]), type(json_config[prm])))
-        else:
-            raise ValueError("Unknown configuration parameter {0}".format(prm))
+    result = copy.deepcopy(default_config)
 
-    # 4. Some data modifications
-    # 4.1. Log level
+    # Copy values from file with type-checking
+    for prm, value in config_from_file.items():
+        result[prm] = type(result[prm])(value)
+
+    # Do some data modifications
+    # 1. Log level
     logging_level_attr = "LOGGING_LEVEL"
     allowed_log_level_values = {"INFO": logging.INFO, "ERROR": logging.ERROR, "CRITICAL": logging.CRITICAL}
-    if result[logging_level_attr] not in allowed_log_level_values:
-        raise ValueError("Allowed values for attribute {0} are: {1}, but it is: {2}".format(
-            logging_level_attr, allowed_log_level_values.keys(), result[logging_level_attr]))
     result[logging_level_attr] = allowed_log_level_values[result[logging_level_attr]]
 
-    # 4.2. Logger file path
-    if len(result["LOGGER_FILE_PATH"]) == 0:
-        result["LOGGER_FILE_PATH"] = None
+    # 2. Logger file path
+    result["LOGGER_FILE_PATH"] = result["LOGGER_FILE_PATH"] or None
 
     return result
 
@@ -137,12 +124,12 @@ def configure_logger(logger_file_path, logging_level):
 
 def get_report_path(log_date, report_dir):
     # Construct report file name
-    report_file_path = os.path.join(report_dir, "report-{0}.html".format(log_date))
+    date_string = log_date.strftime("%Y%m%d")
+    report_file_path = os.path.join(report_dir, "report-{0}.html".format(date_string))
 
     # Check if exists
     if os.path.isfile(report_file_path):
-        logging.info("Report file {0} already exists".format(report_file_path))
-        sys.exit(0)
+        raise FileExistsError("Report file {0} already exists".format(report_file_path))
     else:
         return report_file_path
 
@@ -153,17 +140,14 @@ def generate_report(statistics, report_file_path, pattern_path):
     with open(pattern_path, "rt") as file_in:
         os.makedirs(os.path.dirname(report_file_path), exist_ok=True)
         with open(report_file_path, "w") as file_out:
-            for line in file_in:
-                file_out.write(line.replace('$table_json', json_str))
+            template = Template(file_in.read())
+            file_out.write(template.safe_substitute(table_json=json_str))
 
     logging.info("Report {0} created".format(report_file_path))
 
 
 def parse_log(log_file_path, error_percent):
-    if log_file_path.endswith(".gz"):
-        logfile = gzip.open(log_file_path, 'rt')
-    else:
-        logfile = open(log_file_path)
+    ParseData = namedtuple("ParseData", "data error_message")
 
     # Variables to calculate parsing error percent
     total_lines = 0
@@ -175,27 +159,24 @@ def parse_log(log_file_path, error_percent):
     #     "http://another_url.com": [0.1, 0.102]
     # }
     data = {}
-    for l in logfile:
+    for parsed_line in parser_reader(log_file_path):
         total_lines += 1
-        parsed_line = re.search(format_line, l)
         if parsed_line:
-            url = parsed_line["url"]
-            request_time = float(parsed_line["request_time"])
-            if url in data:
-                data[url].append(request_time)
-            else:
-                data[url] = [request_time]
+            data.setdefault(parsed_line["url"], []).append(float(parsed_line["request_time"]))
         else:
             error_lines += 1
 
-    logfile.close()
-
     # Calculate the percent of parsing errors
     if error_lines / total_lines * 100 > error_percent:
-        logging.error("The pencent of parsing errors exceeded {0}% limit".format(error_percent))
-        sys.exit(1)
+        return ParseData(data, "The percent of parsing errors exceeded {0}% limit".format(error_percent))
+    else:
+        return ParseData(data, None)
 
-    return data
+
+def parser_reader(log_file_path):
+    with gzip.open(log_file_path, 'rt') if log_file_path.endswith(".gz") else open(log_file_path) as file:
+        for l in file:
+            yield re.search(FORMAT_LINE, l)
 
 
 def calculate_statistic(data, round_places, report_size):
@@ -253,25 +234,25 @@ def calculate_statistic(data, round_places, report_size):
 
 
 def get_log_file(log_dir, log_file_mask):
-    log_files = []
     File = namedtuple("File", "file_path log_date")
 
+    top_file = None
     for f in os.listdir(log_dir):
-        log_date = re.match(log_file_mask, f)
-        if os.path.isfile(os.path.join(log_dir, f)) and log_date:
-            log_files.append(File(file_path=os.path.join(log_dir, f), log_date=log_date["date"]))
+        parsed = re.match(log_file_mask, f)
+        if os.path.isfile(os.path.join(log_dir, f)) and parsed:
+            dt = datetime.datetime(year=int(parsed["year"]), month=int(parsed["month"]), day=int(parsed["day"]))
+            current_file = File(file_path=os.path.join(log_dir, f), log_date=dt)
+            top_file = max([top_file, current_file], key=lambda x: x.log_date) if top_file else current_file
 
-    if len(log_files) == 0:
-        logging.info('There are no files with mask "{0}" in the folder {1}'.format(log_file_mask, log_dir))
-        sys.exit(0)
+    if top_file:
+        return top_file
     else:
-        top_first_file = sorted(log_files, key=lambda x: x.log_date, reverse=True)[0]
-        return top_first_file
+        raise FileNotFoundError('There are no files with mask "{0}" in the folder {1}'.format(log_file_mask, log_dir))
 
 
 if __name__ == "__main__":
     try:
-        main(config)
+        main(CONFIG)
     except (Exception, KeyboardInterrupt) as e:
         logging.exception(e)
         sys.exit(1)

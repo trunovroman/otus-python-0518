@@ -6,6 +6,6 @@
   "ERROR_PERCENT": 10,
   "ROUND_PLACES": 3,
   "LOGGING_LEVEL": "INFO",
-  "LOG_FILE_MASK": "(nginx-access-ui.log-(?P<date>\\d{8}))",
+  "LOG_FILE_MASK": "(nginx-access-ui.log-(?P<year>\\d{4})(?P<month>\\d{2})(?P<day>\\d{2})(\\.gz)?$)",
   "LOGGER_FILE_PATH": ""
 }

@@ -12,15 +12,15 @@ python3 log_analyzer.py [--config CONFIG]
 
 ```
 {
-  "REPORT_SIZE": 50,
-  "REPORT_DIR": "./reports",
-  "LOG_DIR": "./log",
-  "PATTERN_FILE_PATH": "./report.html",
-  "ERROR_PERCENT": 10,
-  "ROUND_PLACES": 3,
-  "LOG_LEVEL": "INFO",
-  "LOG_FILE_MASK": "(nginx-access-ui.log-(?P<date>\\d{8}))",
-  "LOGGER_FILE_PATH": ""
+    "REPORT_SIZE": 1000,
+    "REPORT_DIR": "./reports",
+    "LOG_DIR": "./log",
+    "PATTERN_FILE_PATH": "./report.html",
+    "ERROR_PERCENT": 10,
+    "ROUND_PLACES": 3,
+    "LOGGING_LEVEL": "INFO",
+    "LOG_FILE_MASK": "(nginx-access-ui.log-(?P<year>\d{4})(?P<month>\d{2})(?P<day>\d{2})(\.gz)?$)",
+    "LOGGER_FILE_PATH": ""
 }
 ```
 
@@ -31,7 +31,7 @@ python3 log_analyzer.py [--config CONFIG]
 * `ERROR_PERCENT` — (int) процент ошибок парсинга логов, при привышении которого скрипт прекращает работу и выходит с сообщением об ошибке.
 * `ROUND_PLACES` — (int) количество знаков после запятой, до которого округлять все дробные значения в отчете.
 * `LOG_LEVEL` — уровень логирования. Доступны значения INFO, ERROR, CRITICAL.
-* `LOG_FILE_MASK` — регулярное выражение для парсинга имени файлов лога. Должен присутствовать параметр date. Который будет использован для формирования отчета по шаблону `report-<date>.html`.
+* `LOG_FILE_MASK` — регулярное выражение для парсинга имени файлов лога. Должны присутствовать параметры year, month, day. Которые будут использованы для формирования отчета по шаблону `report-<year><month><day>.html`.
 * `LOGGER_FILE_PATH` — полный путь до файла с логами скрипта. Если значение данного атрибута не задано или пустое, то лог работы скрипта выводится в stdout.
 
 ## Запуск тестов
