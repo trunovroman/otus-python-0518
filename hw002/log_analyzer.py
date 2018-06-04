@@ -123,11 +123,9 @@ def configure_logger(logger_file_path, logging_level):
 
 
 def get_report_path(log_date, report_dir):
-    # Construct report file name
     date_string = log_date.strftime("%Y%m%d")
     report_file_path = os.path.join(report_dir, "report-{0}.html".format(date_string))
 
-    # Check if exists
     if os.path.isfile(report_file_path):
         raise FileExistsError("Report file {0} already exists".format(report_file_path))
     else:
@@ -230,7 +228,8 @@ def calculate_statistic(data, round_places, report_size):
         value["time_median"] = round(value["time_median"], round_places)
 
     # Return report_size values sorted by time_sum on descending order
-    return sorted(statistics, key=lambda x: x["time_sum"], reverse=True)[:report_size]
+    statistics.sort(key=lambda x: x["time_sum"], reverse=True)
+    return statistics[:report_size]
 
 
 def get_log_file(log_dir, log_file_mask):
