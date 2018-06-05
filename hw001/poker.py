@@ -1,6 +1,3 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-
 # -----------------
 # Реализуйте функцию best_hand, которая принимает на вход
 # покерную "руку" (hand) из 7ми карт и возвращает лучшую
@@ -28,6 +25,7 @@
 # -----------------
 
 import itertools
+import copy
 
 BLACK_JOKER = '?B'
 RED_JOKER = '?R'
@@ -41,9 +39,9 @@ RED_JOKER_PLACEHOLDERS = ['1H', '2H', '3H', '4H', '5H', '6H', '7H', '8H', '9H', 
 # Custom functions
 # ----------------
 
-def replace_item_in_list(item_list, old_item, new_item):
+def replace_in_list(item_list, old_item, new_item):
     """Копирует список item_list (т.е. не меняет исходный) и заменяет в нем элемент old_item на new_item"""
-    a = list(item_list)
+    a = copy.deepcopy(item_list)
     a[a.index(old_item)] = new_item
     return a
 
@@ -53,8 +51,9 @@ def replace_cards(hand_list, old_card, new_card_list):
     вместо нее элементы из new_card_list. На выходе имеем список из len(new_card_list) рук"""
     result = []
     for hand in hand_list:
-        if hand.count(old_card) != 0:
-            result.extend([replace_item_in_list(hand, old_card, new_card) for new_card in new_card_list])
+        if old_card in hand:
+            # Do set(new_card_list) - set(hand) to exclude duplicate cards from result hand
+            result.extend([replace_in_list(hand, old_card, new_card) for new_card in set(new_card_list) - set(hand)])
         else:
             result.append(hand)
 
@@ -72,19 +71,17 @@ def internal_best_hand(hand_list):
     # Формируем все комбинации по 5 карт для всех возможных рук из 7 карт.
     all_combinations = []
     for x in hand_list:
-        all_combinations.extend(list(
-            sorted(list(y), reverse=True)
-            for y in itertools.combinations(x, 5)
-        ))
+        combination = [sorted(list(y), reverse=True) for y in itertools.combinations(x, 5)]
+        all_combinations.extend(combination)
 
-    # Сопоставляем каждой руке ранг (дубли, которые неминуемо будут для джокеров исключаем за счет группировки)
+    # Combine hand and rank for all items in all_combinations list. Exclude duplicates by iterbools.groupby operation
     combinations_with_rank = list(
         (hand_rank(key), key)
         for key, group in itertools.groupby(sorted(all_combinations))
     )
 
-    # Сортируем по убыванию ранга. Берем первый элемент (самый высокий ранг) — это и будет результат
-    return sorted(combinations_with_rank, reverse=True)[0][1]
+    combinations_with_rank.sort(reverse=True)
+    return combinations_with_rank[0][1]
 
 
 def get_rank(rank_symbol):
@@ -179,7 +176,7 @@ def two_pair(ranks):
     3. Если таких групп 2, то True, иначе None
     """
     groups = itertools.groupby(ranks)
-    pairs = list(y[0] for y in itertools.takewhile(lambda x: len(list(x[1])) >= 2, groups))
+    pairs = [y[0] for y in itertools.takewhile(lambda x: len(list(x[1])) >= 2, groups)]
     return pairs if len(pairs) == 2 else None
 
 
@@ -196,10 +193,10 @@ def best_wild_hand(hand):
     2. А дальше, почти как в best_hand...
     """
 
-    # Начинаем формировать все возможные комбинации рук из 7 карт влючая джокеры
+    # Start to create all possible hand combinations with 7 cards include jokers
     hand_list = [hand]
 
-    # Заменяем сначала черный, потом красный джокер
+    # Replacing black and than red jokers
     hand_list = replace_cards(hand_list, BLACK_JOKER, BLACK_JOKER_PLACEHOLDERS)
     hand_list = replace_cards(hand_list, RED_JOKER, RED_JOKER_PLACEHOLDERS)
 
