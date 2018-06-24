@@ -142,8 +142,8 @@ def trace(intend):
     return wrapper
 
 
-@countcalls
 @memo
+@countcalls
 @n_ary
 def foo(a, b):
     return a + b
