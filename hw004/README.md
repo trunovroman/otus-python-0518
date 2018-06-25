@@ -75,7 +75,7 @@ $ curl -X POST -H "Content-Type: application/json" -d '{"account": "horns&hoofs"
 При вызове метода clients_interests передается неверный json (пропущена запятая после параметра `account`: 
 
 ```
-$ curl -X POST -H "Content-Type: application/json" -d '{"account": "horns&hoofs" "login": "user23", "method": "clients_interests", "token": "8195bd0d4773708c1940410eb838a0bf3b88b9a03d09eba0403741b8a63f7f1a7e0c874be378c297d6332a9f392975e6b83cba01372cac2e22", "arguments": {"client_ids": [1,2,3,4], "date": "20.07.2017"}}' http://127.0.0.1:8080/method/
+$ curl -X POST -H "Content-Type: application/json" -d '{"account": "horns&hoofs" "login": "user23", "method": "clients_interests", "token": "8195bd0d4773708c1940410eb838a0bf3b88b9a03d09eba0403741b8a63f7f1a7e0c874be378c297d6332a9f3929c4e2d1524d90d675e6b83cba01372cac2e22", "arguments": {"client_ids": [1,2,3,4], "date": "20.07.2017"}}' http://127.0.0.1:8080/method/
 ```
 Ответ:
 ```
@@ -85,7 +85,7 @@ $ curl -X POST -H "Content-Type: application/json" -d '{"account": "horns&hoofs"
 При вызове метода clients_interests указывается неверный адрес `http://127.0.0.1:8080/unknown_method/`: 
 
 ```
-$ curl -X POST -H "Content-Type: application/json" -d '{"account": "horns&hoofs", "login": "user23", "method": "clients_interests", "token": "8195bd0d4773708c1940410eb838a0bf3b88b9a03d09eba0403741b8a63f7f1a7e0c874be378c297d6332a9f392975e6b83cba01372cac2e22", "arguments": {"client_ids": [1,2,3,4], "date": "20.07.2017"}}' http://127.0.0.1:8080/test_method/
+$ curl -X POST -H "Content-Type: application/json" -d '{"account": "horns&hoofs", "login": "user23", "method": "clients_interests", "token": "8195bd0d4773708c1940410eb838a0bf3b88b9a03d09eba0403741b8a63f7f1a7e0c874be378c297d6332a9f3929c4e2d1524d90d675e6b83cba01372cac2e22", "arguments": {"client_ids": [1,2,3,4], "date": "20.07.2017"}}' http://127.0.0.1:8080/unknown_method/
 ```
 Ответ:
 ```

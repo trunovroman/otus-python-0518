@@ -42,8 +42,9 @@ def method_handler(request, ctx, store):
     # 3 — Error: request is not empty but data for method request is invalid
     # 4 — Error: request is not empty, method request is valid, auth is valid but client request is invalid
     # 5 — Error: request is not empty, method request is valid, auth is valid but online score request is invalid
-    # 6 — OK: client request is valid
-    # 7 — OK: online score request is valid
+    # 6 — Error: invalid method name
+    # 7 — OK: client request is valid
+    # 8 — OK: online score request is valid
 
     body = request.get('body', None)
 
@@ -77,7 +78,7 @@ def method_handler(request, ctx, store):
                     )}
 
                 ctx['has'] = online_score.get_not_null_fields()
-                return response, OK  # 7
+                return response, OK  # 8
 
             else:
                 return online_score.errors, INVALID_REQUEST  # 5
@@ -88,12 +89,12 @@ def method_handler(request, ctx, store):
             if clients_interests.is_valid():
                 response = {str(cid): scoring.get_interests(store, cid) for cid in clients_interests['client_ids']}
                 ctx['nclients'] = len(clients_interests['client_ids'])
-                return response, OK  # 6
+                return response, OK  # 7
             else:
                 return clients_interests.errors, INVALID_REQUEST  # 4
 
         else:
-            print('Wrong value')
+            return None, NOT_FOUND  # 6
     else:
         return method_request.errors, INVALID_REQUEST  # 3
 
