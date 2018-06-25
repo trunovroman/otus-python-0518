@@ -52,7 +52,6 @@ def method_handler(request, ctx, store):
         return None, INVALID_REQUEST  # 1
 
     method_request = requests.MethodRequest(body)
-
     if method_request.is_valid():
         if not check_auth(method_request):
             return None, FORBIDDEN  # 2
@@ -61,9 +60,7 @@ def method_handler(request, ctx, store):
         if method == 'online_score':
 
             online_score = requests.OnlineScoreRequest(method_request['arguments'])
-
             if online_score.is_valid():
-
                 if method_request.is_admin:
                     response = {"score": 42}
                 else:
@@ -76,16 +73,14 @@ def method_handler(request, ctx, store):
                         online_score['first_name'],
                         online_score['last_name'],
                     )}
-
                 ctx['has'] = online_score.get_not_null_fields()
                 return response, OK  # 8
-
             else:
                 return online_score.errors, INVALID_REQUEST  # 5
 
         elif method == 'clients_interests':
-            clients_interests = requests.ClientsInterestsRequest(method_request['arguments'])
 
+            clients_interests = requests.ClientsInterestsRequest(method_request['arguments'])
             if clients_interests.is_valid():
                 response = {str(cid): scoring.get_interests(store, cid) for cid in clients_interests['client_ids']}
                 ctx['nclients'] = len(clients_interests['client_ids'])
