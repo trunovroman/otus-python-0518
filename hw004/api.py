@@ -1,17 +1,15 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-
-import abc
 import json
 import datetime
 import logging
 import hashlib
 import uuid
 from optparse import OptionParser
-from BaseHTTPServer import HTTPServer, BaseHTTPRequestHandler
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+import requests
+import scoring
 
 SALT = "Otus"
-ADMIN_LOGIN = "admin"
 ADMIN_SALT = "42"
 OK = 200
 BAD_REQUEST = 400
@@ -26,87 +24,78 @@ ERRORS = {
     INVALID_REQUEST: "Invalid Request",
     INTERNAL_ERROR: "Internal Server Error",
 }
-UNKNOWN = 0
-MALE = 1
-FEMALE = 2
-GENDERS = {
-    UNKNOWN: "unknown",
-    MALE: "male",
-    FEMALE: "female",
-}
-
-
-class CharField(object):
-    pass
-
-
-class ArgumentsField(object):
-    pass
-
-
-class EmailField(CharField):
-    pass
-
-
-class PhoneField(object):
-    pass
-
-
-class DateField(object):
-    pass
-
-
-class BirthDayField(object):
-    pass
-
-
-class GenderField(object):
-    pass
-
-
-class ClientIDsField(object):
-    pass
-
-
-class ClientsInterestsRequest(object):
-    client_ids = ClientIDsField(required=True)
-    date = DateField(required=False, nullable=True)
-
-
-class OnlineScoreRequest(object):
-    first_name = CharField(required=False, nullable=True)
-    last_name = CharField(required=False, nullable=True)
-    email = EmailField(required=False, nullable=True)
-    phone = PhoneField(required=False, nullable=True)
-    birthday = BirthDayField(required=False, nullable=True)
-    gender = GenderField(required=False, nullable=True)
-
-
-class MethodRequest(object):
-    account = CharField(required=False, nullable=True)
-    login = CharField(required=True, nullable=True)
-    token = CharField(required=True, nullable=True)
-    arguments = ArgumentsField(required=True, nullable=True)
-    method = CharField(required=True, nullable=False)
-
-    @property
-    def is_admin(self):
-        return self.login == ADMIN_LOGIN
 
 
 def check_auth(request):
     if request.is_admin:
-        digest = hashlib.sha512(datetime.datetime.now().strftime("%Y%m%d%H") + ADMIN_SALT).hexdigest()
+        digest = hashlib.sha512((datetime.datetime.now().strftime("%Y%m%d%H") + ADMIN_SALT).encode('utf-8')).hexdigest()
     else:
-        digest = hashlib.sha512(request.account + request.login + SALT).hexdigest()
-    if digest == request.token:
+        digest = hashlib.sha512((request['account'] + request['login'] + SALT).encode('utf-8')).hexdigest()
+    if digest == request['token']:
         return True
     return False
 
 
 def method_handler(request, ctx, store):
-    response, code = None, None
-    return response, code
+    # 1 — Error: empty request
+    # 2 — Error: request is not empty, method request is valid but auth is bad
+    # 3 — Error: request is not empty but data for method request is invalid
+    # 4 — Error: request is not empty, method request is valid, auth is valid but client request is invalid
+    # 5 — Error: request is not empty, method request is valid, auth is valid but online score request is invalid
+    # 6 — OK: client request is valid
+    # 7 — OK: online score request is valid
+
+    body = request.get('body', None)
+
+    if len(body) == 0:
+        return None, INVALID_REQUEST  # 1
+
+    method_request = requests.MethodRequest(body)
+
+    if method_request.is_valid():
+        if not check_auth(method_request):
+            return None, FORBIDDEN  # 2
+
+        method = method_request['method']
+        if method == 'online_score':
+
+            online_score = requests.OnlineScoreRequest(method_request['arguments'])
+
+            if online_score.is_valid():
+
+                if method_request.is_admin:
+                    response = {"score": 42}
+                else:
+                    response = {"score": scoring.get_score(
+                        store,
+                        online_score['phone'],
+                        online_score['email'],
+                        online_score['birthday'],
+                        online_score['gender'],
+                        online_score['first_name'],
+                        online_score['last_name'],
+                    )}
+
+                ctx['has'] = online_score.get_not_null_fields()
+                return response, OK  # 7
+
+            else:
+                return online_score.errors, INVALID_REQUEST  # 5
+
+        elif method == 'clients_interests':
+            clients_interests = requests.ClientsInterestsRequest(method_request['arguments'])
+
+            if clients_interests.is_valid():
+                response = {str(cid): scoring.get_interests(store, cid) for cid in clients_interests['client_ids']}
+                ctx['nclients'] = len(clients_interests['client_ids'])
+                return response, OK  # 6
+            else:
+                return clients_interests.errors, INVALID_REQUEST  # 4
+
+        else:
+            print('Wrong value')
+    else:
+        return method_request.errors, INVALID_REQUEST  # 3
 
 
 class MainHTTPHandler(BaseHTTPRequestHandler):
@@ -125,7 +114,7 @@ class MainHTTPHandler(BaseHTTPRequestHandler):
         try:
             data_string = self.rfile.read(int(self.headers['Content-Length']))
             request = json.loads(data_string)
-        except:
+        except Exception as e:
             code = BAD_REQUEST
 
         if request:
@@ -134,7 +123,7 @@ class MainHTTPHandler(BaseHTTPRequestHandler):
             if path in self.router:
                 try:
                     response, code = self.router[path]({"body": request, "headers": self.headers}, context, self.store)
-                except Exception, e:
+                except Exception as e:
                     logging.exception("Unexpected error: %s" % e)
                     code = INTERNAL_ERROR
             else:
@@ -149,8 +138,9 @@ class MainHTTPHandler(BaseHTTPRequestHandler):
             r = {"error": response or ERRORS.get(code, "Unknown Error"), "code": code}
         context.update(r)
         logging.info(context)
-        self.wfile.write(json.dumps(r))
+        self.wfile.write(json.dumps(r).encode('utf-8'))
         return
+
 
 if __name__ == "__main__":
     op = OptionParser()
