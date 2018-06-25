@@ -3,10 +3,10 @@ import datetime
 import logging
 import hashlib
 import uuid
+import re
 from optparse import OptionParser
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-import requests
 import scoring
 
 SALT = "Otus"
@@ -24,6 +24,193 @@ ERRORS = {
     INVALID_REQUEST: "Invalid Request",
     INTERNAL_ERROR: "Internal Server Error",
 }
+UNKNOWN = 0
+MALE = 1
+FEMALE = 2
+GENDERS = {
+    UNKNOWN: "unknown",
+    MALE: "male",
+    FEMALE: "female",
+}
+ADMIN_LOGIN = "admin"
+
+
+# --------------------------------------------------------------------------------------
+# Fields
+# --------------------------------------------------------------------------------------
+class Field:
+    empty_values = ('', [], (), {})
+
+    def __init__(self, required=True, nullable=False):
+        self.required, self.nullable = required, nullable
+
+    def validate(self, value):
+        if value is None and self.required:
+            raise Exception("This field is required.")
+        if value in self.empty_values and not self.nullable:
+            raise Exception("Empty value is not allowed.")
+
+    def to_python(self, value):
+        return value
+
+    def clean(self, value):
+        self.validate(value)
+        return self.to_python(value)
+
+
+class CharField(Field):
+    def validate(self, value):
+        super().validate(value)
+        if value is not None and not isinstance(value, str):
+            raise Exception("This field must be str.")
+
+
+class ArgumentsField(Field):
+    pass
+
+
+class EmailField(CharField):
+    def validate(self, value):
+        super().validate(value)
+        if value is not None and "@" not in value:
+            raise Exception("Email field must include @.")
+
+
+class PhoneField(Field):
+    regex = re.compile("^7[0-9]{10}$")
+
+    def validate(self, value):
+        super().validate(value)
+        if value is not None:
+            if self.regex.match(str(value)) is None:
+                raise Exception("Phone number is invalid: {0}.".format(value))
+
+
+class DateField(Field):
+    def validate(self, value):
+        super().validate(value)
+        if value is not None:
+            try:
+                datetime.datetime.strptime(value, "%d.%m.%Y").date()
+            except ValueError:
+                return "Date must have format: DD.MM.YYYY."
+
+    def to_python(self, value):
+        return datetime.datetime.strptime(value, "%d.%m.%Y") if value is not None else None
+
+
+class BirthDayField(DateField):
+    def validate(self, value):
+        super().validate(value)
+        if value is not None:
+            if (datetime.datetime.now() - self.to_python(value)).days / 365 > 70:
+                raise Exception("Birthday must be later than 70 years ago.")
+
+
+class GenderField(Field):
+    def validate(self, value):
+        super().validate(value)
+        if value is not None:
+            if not isinstance(value, int):
+                raise Exception("Gender must be a digit.")
+            if int(value) not in GENDERS:
+                raise Exception("Gender must be equal to {0}".format(list(GENDERS.keys())))
+
+
+class ClientIDsField(Field):
+    def validate(self, value):
+        super().validate(value)
+        if not isinstance(value, list):
+            raise Exception('Field must be a list.')
+        for item in value:
+            if not isinstance(item, int):
+                raise Exception('Items must be int.')
+
+
+# --------------------------------------------------------------------------------------
+# Requests
+# --------------------------------------------------------------------------------------
+class RequestMetaclass(type):
+    def __new__(mcs, name, bases, attributes):
+        custom_fields = []
+        for key, value in list(attributes.items()):
+            if isinstance(value, Field):
+                custom_fields.append((key, value))
+        new_class = type.__new__(mcs, name, bases, attributes)
+        new_class.fields = custom_fields
+        return new_class
+
+
+class BaseRequest(metaclass=RequestMetaclass):
+    def __init__(self, data=None):
+        self.data = {} if data is None else data
+        self.cleaned_data = {}
+        self.errors = []
+
+    def __getitem__(self, item):
+        return self.cleaned_data[item]
+
+    def is_valid(self):
+        self.cleaned_data = {}
+        self.errors = []
+        for name, field in self.fields:
+            try:
+                value = self.data.get(name, None)
+                self.cleaned_data[name] = field.clean(value)
+            except Exception as e:
+                self.errors.append('Field: {0}. {1}'.format(name, e))
+        return True if not len(self.errors) else False
+
+
+class ClientsInterestsRequest(BaseRequest):
+    client_ids = ClientIDsField(required=True)
+    date = DateField(required=False, nullable=True)
+
+
+class OnlineScoreRequest(BaseRequest):
+    first_name = CharField(required=False, nullable=True)
+    last_name = CharField(required=False, nullable=True)
+    email = EmailField(required=False, nullable=True)
+    phone = PhoneField(required=False, nullable=True)
+    birthday = BirthDayField(required=False, nullable=True)
+    gender = GenderField(required=False, nullable=True)
+    valid_combinations = [
+        ["phone", "email"],
+        ["first_name", "last_name"],
+        ["gender", "birthday"]
+    ]
+
+    def is_valid(self):
+        is_valid = super().is_valid()
+        if not is_valid:
+            return is_valid
+
+        for cmb in self.valid_combinations:
+            flag = True
+            for field_name in cmb:
+                if self.cleaned_data.get(field_name) is None:
+                    flag = False
+            if flag:
+                return True
+
+        self.errors.append("Online score request must include at least one not null combination: {0}"
+                           .format(self.valid_combinations))
+        return False
+
+    def get_not_null_fields(self):
+        return [key for key, value in self.cleaned_data.items() if value is not None]
+
+
+class MethodRequest(BaseRequest):
+    account = CharField(required=False, nullable=True)
+    login = CharField(required=True, nullable=True)
+    token = CharField(required=True, nullable=True)
+    arguments = ArgumentsField(required=True, nullable=True)
+    method = CharField(required=True, nullable=False)
+
+    @property
+    def is_admin(self):
+        return self['login'] == ADMIN_LOGIN
 
 
 def check_auth(request):
@@ -36,6 +223,9 @@ def check_auth(request):
     return False
 
 
+# --------------------------------------------------------------------------------------
+# Handlers
+# --------------------------------------------------------------------------------------
 def method_handler(request, ctx, store):
     # 1 — Error: empty request
     # 2 — Error: request is not empty, method request is valid but auth is bad
@@ -51,7 +241,7 @@ def method_handler(request, ctx, store):
     if len(body) == 0:
         return None, INVALID_REQUEST  # 1
 
-    method_request = requests.MethodRequest(body)
+    method_request = MethodRequest(body)
     if method_request.is_valid():
         if not check_auth(method_request):
             return None, FORBIDDEN  # 2
@@ -59,7 +249,7 @@ def method_handler(request, ctx, store):
         method = method_request['method']
         if method == 'online_score':
 
-            online_score = requests.OnlineScoreRequest(method_request['arguments'])
+            online_score = OnlineScoreRequest(method_request['arguments'])
             if online_score.is_valid():
                 if method_request.is_admin:
                     response = {"score": 42}
@@ -80,7 +270,7 @@ def method_handler(request, ctx, store):
 
         elif method == 'clients_interests':
 
-            clients_interests = requests.ClientsInterestsRequest(method_request['arguments'])
+            clients_interests = ClientsInterestsRequest(method_request['arguments'])
             if clients_interests.is_valid():
                 response = {str(cid): scoring.get_interests(store, cid) for cid in clients_interests['client_ids']}
                 ctx['nclients'] = len(clients_interests['client_ids'])
@@ -112,6 +302,7 @@ class MainHTTPHandler(BaseHTTPRequestHandler):
             request = json.loads(data_string)
         except Exception as e:
             code = BAD_REQUEST
+            response = str(e)
 
         if request:
             path = self.path.strip("/")
