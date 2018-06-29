@@ -4,6 +4,7 @@ import logging
 import hashlib
 import uuid
 import re
+import abc
 from optparse import OptionParser
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
@@ -42,41 +43,7 @@ class ValidationError(Exception):
     def __init__(self, message):
         super().__init__(message)
 
-        if isinstance(message, dict):
-            self.error_dict = {}
-            for field, messages in message.items():
-                if not isinstance(messages, ValidationError):
-                    messages = ValidationError(messages)
-                self.error_dict[field] = messages.error_list
-
-        elif isinstance(message, list):
-            self.error_list = []
-            for message in message:
-                if hasattr(message, "error_dict"):
-                    err = ["{0}: {1}".format(field, err) for field, err in message.error_dict.items()]
-                    self.error_list.extend(err)
-                else:
-                    self.error_list.extend(message.error_list)
-
-        else:
-            self.message = message
-            self.error_list = [self]
-
-    def __iter__(self):
-        if hasattr(self, "error_dict"):
-            for field, errors in self.error_dict.items():
-                yield field, list(ValidationError(errors))
-        else:
-            for error in self.error_list:
-                message = error.message
-                yield str(message)
-
     def __str__(self):
-        if hasattr(self, "error_dict"):
-            return repr(dict(self))
-        return repr(list(self))
-
-    def __repr__(self):
         return "ValidationError({0})".format(self)
 
 
@@ -193,23 +160,16 @@ class BaseRequest(metaclass=RequestMetaclass):
         self._errors = []
 
     def clean_fields(self):
-        errors = {}
         for name, field in self.fields.items():
             try:
                 setattr(self, name, field.clean(self.data.get(name, None)))
             except ValidationError as e:
                 setattr(self, name, None)
-                errors[name] = e.error_list
-
-        if errors:
-            raise ValidationError(errors)
+                self._errors.append(e)
 
     def is_valid(self):
         self._errors = []
-        try:
-            self.clean_fields()
-        except ValidationError as e:
-            self._errors.append(e)
+        self.clean_fields()
 
         return True if not len(self._errors) else False
 
@@ -218,20 +178,29 @@ class BaseRequest(metaclass=RequestMetaclass):
         return str(self._errors)
 
 
-class ClientsInterestsRequest(BaseRequest):
+class ScoringResultRequest(BaseRequest):
+    def get_result(self, ctx, store, is_admin):
+        if not self.is_valid():
+            return self.errors, INVALID_REQUEST
+
+        return self.get_scoring(ctx, store, is_admin)
+
+    @abc.abstractmethod
+    def get_scoring(self, ctx, store, is_admin):
+        """Return scoring in derivative classes"""
+
+
+class ClientsInterestsRequest(ScoringResultRequest):
     client_ids = ClientIDsField(required=True)
     date = DateField(required=False, nullable=True)
 
-    def handler(self, ctx, store):
-        if self.is_valid():
-            response = {str(cid): scoring.get_interests(store, cid) for cid in self.client_ids}
-            ctx['nclients'] = len(self.client_ids)
-            return response, OK
-        else:
-            return self.errors, INVALID_REQUEST
+    def get_scoring(self, ctx, store, is_admin):
+        response = {str(cid): scoring.get_interests(store, cid) for cid in self.client_ids}
+        ctx['nclients'] = len(self.client_ids)
+        return response, OK
 
 
-class OnlineScoreRequest(BaseRequest):
+class OnlineScoreRequest(ScoringResultRequest):
     first_name = CharField(required=False, nullable=True)
     last_name = CharField(required=False, nullable=True)
     email = EmailField(required=False, nullable=True)
@@ -257,41 +226,31 @@ class OnlineScoreRequest(BaseRequest):
                               format(self.valid_combinations))
 
     def clean_fields(self):
-        errors = []
-        try:
-            super().clean_fields()
-        except ValidationError as e:
-            errors.append(e)
+        super().clean_fields()
 
         try:
             self.check_combinations()
         except ValidationError as e:
-            errors.append(e)
-
-        if errors:
-            raise ValidationError(errors)
+            self._errors.append(e)
 
     def get_not_null_fields(self):
         return [key for key in self.fields if getattr(self, key, None) is not None]
 
-    def handler(self, ctx, store, is_admin):
-        if self.is_valid():
-            if is_admin:
-                response = {"score": 42}
-            else:
-                response = {"score": scoring.get_score(
-                    store,
-                    self.phone,
-                    self.email,
-                    self.birthday,
-                    self.gender,
-                    self.first_name,
-                    self.last_name,
-                )}
-            ctx['has'] = self.get_not_null_fields()
-            return response, OK
+    def get_scoring(self, ctx, store, is_admin):
+        if is_admin:
+            response = {"score": 42}
         else:
-            return self._errors, INVALID_REQUEST
+            response = {"score": scoring.get_score(
+                store,
+                self.phone,
+                self.email,
+                self.birthday,
+                self.gender,
+                self.first_name,
+                self.last_name,
+            )}
+        ctx['has'] = self.get_not_null_fields()
+        return response, OK
 
 
 class MethodRequest(BaseRequest):
@@ -320,7 +279,12 @@ def check_auth(request):
 # Handlers
 # --------------------------------------------------------------------------------------
 def method_handler(request, ctx, store):
-    body = request.get('body', None)
+    handlers = {
+        "online_score": OnlineScoreRequest,
+        "clients_interests": ClientsInterestsRequest
+    }
+
+    body = request.get("body", None)
 
     if len(body) == 0:
         return None, INVALID_REQUEST
@@ -331,10 +295,9 @@ def method_handler(request, ctx, store):
         if not check_auth(method_request):
             return None, FORBIDDEN
 
-        if method_request.method == 'online_score':
-            return OnlineScoreRequest(method_request.arguments).handler(ctx, store, method_request.is_admin)
-        elif method_request.method == 'clients_interests':
-            return ClientsInterestsRequest(method_request.arguments).handler(ctx, store)
+        handler = handlers.get(method_request.method, None)
+        if handler:
+            return handler(method_request.arguments).get_result(ctx, store, method_request.is_admin)
         else:
             return None, NOT_FOUND
 
