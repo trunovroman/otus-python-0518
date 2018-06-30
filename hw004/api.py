@@ -40,11 +40,7 @@ ADMIN_LOGIN = "admin"
 # Exception
 # --------------------------------------------------------------------------------------
 class ValidationError(Exception):
-    def __init__(self, message):
-        super().__init__(message)
-
-    def __str__(self):
-        return "ValidationError({0})".format(self)
+    pass
 
 
 # --------------------------------------------------------------------------------------
@@ -66,14 +62,18 @@ class Field:
         return value
 
     def clean(self, value):
+        value = self.to_python(value)
         self.validate(value)
-        return self.to_python(value)
+        return value
 
 
 class CharField(Field):
-    def validate(self, value):
-        super().validate(value)
-        if value is not None and not isinstance(value, str):
+    def to_python(self, value):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return str(value).strip()
+        else:
             raise ValidationError("This field must be str.")
 
 
@@ -94,28 +94,35 @@ class PhoneField(Field):
     def validate(self, value):
         super().validate(value)
         if value is not None:
-            if self.regex.match(str(value)) is None:
+            if self.regex.match(value) is None:
                 raise ValidationError("Phone number is invalid: {0}.".format(value))
+
+    def to_python(self, value):
+        if value is None:
+            return None
+
+        if isinstance(value, str) or isinstance(value, int):
+            return str(value).strip()
+        else:
+            raise ValidationError("Phone field must be str or digit.")
 
 
 class DateField(Field):
-    def validate(self, value):
-        super().validate(value)
-        if value is not None:
-            try:
-                datetime.datetime.strptime(value, "%d.%m.%Y").date()
-            except ValueError:
-                raise ValidationError("Date must have format: DD.MM.YYYY.")
-
     def to_python(self, value):
-        return datetime.datetime.strptime(value, "%d.%m.%Y") if value is not None else None
+        if value is None:
+            return None
+
+        try:
+            return datetime.datetime.strptime(value, "%d.%m.%Y") if value is not None else None
+        except ValueError:
+            raise ValidationError("Date must be the following format: DD.MM.YYYY.")
 
 
 class BirthDayField(DateField):
     def validate(self, value):
         super().validate(value)
         if value is not None:
-            if (datetime.datetime.now() - self.to_python(value)).days / 365 > 70:
+            if (datetime.datetime.now() - value).days / 365 > 70:
                 raise ValidationError("Birthday must be later than 70 years ago.")
 
 
@@ -123,20 +130,28 @@ class GenderField(Field):
     def validate(self, value):
         super().validate(value)
         if value is not None:
-            if not isinstance(value, int):
-                raise ValidationError("Gender must be a digit.")
-            if int(value) not in GENDERS:
+            if value not in GENDERS:
                 raise ValidationError("Gender must be equal to {0}".format(list(GENDERS.keys())))
+
+    def to_python(self, value):
+        if value is None:
+            return None
+        if isinstance(value, int):
+            return int(value)
+        else:
+            raise ValidationError("This field must be int.")
 
 
 class ClientIDsField(Field):
-    def validate(self, value):
-        super().validate(value)
+    def to_python(self, value):
+        if value is None:
+            return None
         if not isinstance(value, list):
             raise ValidationError('Field must be a list.')
         for item in value:
             if not isinstance(item, int):
                 raise ValidationError('Items must be int.')
+        return value
 
 
 # --------------------------------------------------------------------------------------
@@ -279,7 +294,7 @@ def check_auth(request):
 # Handlers
 # --------------------------------------------------------------------------------------
 def method_handler(request, ctx, store):
-    handlers = {
+    request_handlers = {
         "online_score": OnlineScoreRequest,
         "clients_interests": ClientsInterestsRequest
     }
@@ -295,7 +310,7 @@ def method_handler(request, ctx, store):
         if not check_auth(method_request):
             return None, FORBIDDEN
 
-        handler = handlers.get(method_request.method, None)
+        handler = request_handlers.get(method_request.method, None)
         if handler:
             return handler(method_request.arguments).get_result(ctx, store, method_request.is_admin)
         else:
