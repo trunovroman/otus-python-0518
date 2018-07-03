@@ -193,29 +193,12 @@ class BaseRequest(metaclass=RequestMetaclass):
         return str(self._errors)
 
 
-class ScoringResultRequest(BaseRequest):
-    def get_result(self, ctx, store, is_admin):
-        if not self.is_valid():
-            return self.errors, INVALID_REQUEST
-
-        return self.get_scoring(ctx, store, is_admin)
-
-    @abc.abstractmethod
-    def get_scoring(self, ctx, store, is_admin):
-        """Return scoring in derivative classes"""
-
-
-class ClientsInterestsRequest(ScoringResultRequest):
+class ClientsInterestsRequest(BaseRequest):
     client_ids = ClientIDsField(required=True)
     date = DateField(required=False, nullable=True)
 
-    def get_scoring(self, ctx, store, is_admin):
-        response = {str(cid): scoring.get_interests(store, cid) for cid in self.client_ids}
-        ctx['nclients'] = len(self.client_ids)
-        return response, OK
 
-
-class OnlineScoreRequest(ScoringResultRequest):
+class OnlineScoreRequest(BaseRequest):
     first_name = CharField(required=False, nullable=True)
     last_name = CharField(required=False, nullable=True)
     email = EmailField(required=False, nullable=True)
@@ -251,22 +234,6 @@ class OnlineScoreRequest(ScoringResultRequest):
     def get_not_null_fields(self):
         return [key for key in self.fields if getattr(self, key, None) is not None]
 
-    def get_scoring(self, ctx, store, is_admin):
-        if is_admin:
-            response = {"score": 42}
-        else:
-            response = {"score": scoring.get_score(
-                store,
-                self.phone,
-                self.email,
-                self.birthday,
-                self.gender,
-                self.first_name,
-                self.last_name,
-            )}
-        ctx['has'] = self.get_not_null_fields()
-        return response, OK
-
 
 class MethodRequest(BaseRequest):
     account = CharField(required=False, nullable=True)
@@ -278,6 +245,57 @@ class MethodRequest(BaseRequest):
     @property
     def is_admin(self):
         return self.login == ADMIN_LOGIN
+
+
+class BaseRequestHandler:
+    def __init__(self, method_request):
+        self.method_request = method_request
+        self.scoring_request = self.request_type()(data=method_request.arguments)
+
+    def do(self, ctx, store):
+        if not self.scoring_request.is_valid():
+            return self.scoring_request.errors, INVALID_REQUEST
+
+        return self.get_scoring(ctx, store)
+
+    @abc.abstractmethod
+    def request_type(self):
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def get_scoring(self, ctx, store):
+        raise NotImplementedError
+
+
+class ClientsInterestsRequestHandler(BaseRequestHandler):
+    def request_type(self):
+        return ClientsInterestsRequest
+
+    def get_scoring(self, ctx, store):
+        response = {str(cid): scoring.get_interests(store, cid) for cid in self.scoring_request.client_ids}
+        ctx['nclients'] = len(self.scoring_request.client_ids)
+        return response, OK
+
+
+class OnlineScoreRequestHandler(BaseRequestHandler):
+    def request_type(self):
+        return OnlineScoreRequest
+
+    def get_scoring(self, ctx, store):
+        if self.method_request.is_admin:
+            response = {"score": 42}
+        else:
+            response = {"score": scoring.get_score(
+                store,
+                self.scoring_request.phone,
+                self.scoring_request.email,
+                self.scoring_request.birthday,
+                self.scoring_request.gender,
+                self.scoring_request.first_name,
+                self.scoring_request.last_name,
+            )}
+        ctx['has'] = self.scoring_request.get_not_null_fields()
+        return response, OK
 
 
 def check_auth(request):
@@ -294,9 +312,9 @@ def check_auth(request):
 # Handlers
 # --------------------------------------------------------------------------------------
 def method_handler(request, ctx, store):
-    request_handlers = {
-        "online_score": OnlineScoreRequest,
-        "clients_interests": ClientsInterestsRequest
+    request_handler_map = {
+        "online_score": OnlineScoreRequestHandler,
+        "clients_interests": ClientsInterestsRequestHandler
     }
 
     body = request.get("body", None)
@@ -310,9 +328,9 @@ def method_handler(request, ctx, store):
         if not check_auth(method_request):
             return None, FORBIDDEN
 
-        handler = request_handlers.get(method_request.method, None)
-        if handler:
-            return handler(method_request.arguments).get_result(ctx, store, method_request.is_admin)
+        request_handler = request_handler_map.get(method_request.method, None)
+        if request_handler:
+            return request_handler(method_request).do(ctx, store)
         else:
             return None, NOT_FOUND
 
