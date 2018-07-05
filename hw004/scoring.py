@@ -1,4 +1,5 @@
 import hashlib
+import api
 
 
 def get_score(store, phone, email, birthday=None, gender=None, first_name=None, last_name=None):
@@ -22,10 +23,12 @@ def get_score(store, phone, email, birthday=None, gender=None, first_name=None, 
     if first_name and last_name:
         score += 0.5
     # cache for 60 minutes
+    api.logging.info("key: {0}, score: {1}".format(key, score))
     store.cache_set(key, score,  60 * 60)
     return score
 
 
 def get_interests(store, cid):
     r = store.get("i:%s" % cid)
+    api.logging.info("cid: {0}, r: {1}".format(cid, str(r if r else "")))
     return r if r else []
