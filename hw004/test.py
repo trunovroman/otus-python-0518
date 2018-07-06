@@ -24,7 +24,8 @@ redis_config = {
     "port": 6379,
     "db": 0,
     "connect_timeout": 1,
-    "reconnect_attempts": 5
+    "reconnect_attempts": 5,
+    "reconnect_delay": 0
 }
 
 
@@ -81,7 +82,8 @@ class TestScoring:
             redis_config["port"],
             redis_config["db"],
             redis_config["connect_timeout"],
-            redis_config["reconnect_attempts"]
+            redis_config["reconnect_attempts"],
+            redis_config["reconnect_delay"]
         )
 
     @pytest.mark.parametrize("error", [redis.TimeoutError, redis.ConnectionError])
@@ -145,13 +147,14 @@ class TestScoring:
 # Score
 # ----------------
 class TestScore:
-    def get_store(self):
+    def get_store(self, reconnect_attempts=None, reconnect_delay=None):
         return store.Store(
             redis_config["host_name"],
             redis_config["port"],
             redis_config["db"],
             redis_config["connect_timeout"],
-            redis_config["reconnect_attempts"]
+            reconnect_attempts or redis_config["reconnect_attempts"],
+            reconnect_delay or redis_config["reconnect_delay"]
         )
 
     def test_ok_cache_set_get(self):
@@ -180,6 +183,25 @@ class TestScore:
         assert st.cache_get(key) == value
         time.sleep(1.1)
         assert st.cache_get(key) is None
+
+    @pytest.mark.parametrize("error", [redis.TimeoutError, redis.ConnectionError])
+    @pytest.mark.parametrize("cid", [1])
+    def test_ok_reconnect(self, error, cid):
+        """Проверяем, что при соответствующей настройке таймаутов попытки реконнекта продолжаются какое-то время"""
+
+        attempts = 2
+        delay = 0.6
+
+        st = self.get_store(reconnect_attempts=attempts, reconnect_delay=delay)
+        st.redis.execute_command = mock.PropertyMock(side_effect=error)  # mock execute_command to raise exception
+
+        start = datetime.datetime.now()
+        try:
+            scoring.get_interests(st, cid)
+            pytest.fail("Exception expected")
+        except error:
+            end = datetime.datetime.now()
+            assert (end - start).total_seconds() >= attempts * delay
 
 
 # ----------------

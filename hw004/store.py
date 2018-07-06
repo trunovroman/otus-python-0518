@@ -1,10 +1,12 @@
 import redis
 import json
+import time
 
 
 class Store:
-    def __init__(self, host, port, db, connect_timeout, reconnect_attempts):
+    def __init__(self, host, port, db, connect_timeout, reconnect_attempts, reconnect_delay):
         self.reconnect_attempts = reconnect_attempts
+        self.reconnect_delay = reconnect_delay
         self.redis = redis.StrictRedis(host=host, port=port, db=db, socket_connect_timeout=connect_timeout,
                                        decode_responses=True)
 
@@ -15,6 +17,10 @@ class Store:
             try:
                 return method(*args)
             except (redis.ConnectionError, redis.TimeoutError):
+                # Тут возникла дилемма: начинать ли отсчет delay после того как произошла ошибка или с момента
+                # отправки команды в блоке try/except на исполнение? Например, зачем к времени таймаута плюсовать
+                # еще и время reconnect_delay, можно просто его учитывать В НЕМ. Но пока оставил так, по простому.
+                time.sleep(self.reconnect_delay)
                 if i == self.reconnect_attempts:
                     raise
             i += 1
